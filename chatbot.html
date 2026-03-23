@@ -1,123 +1,3 @@
-<?php
-// ── DEBUG: شيل الـ # من السطر اللي تحت لو عايز تشوف تفاصيل الخطأ ──
-// error_reporting(E_ALL); ini_set('display_errors', 1);
-
-define('GEMINI_KEY', 'AIzaSyCWpC_xqTGsloDeOUPNg00-c6a47YPIWwk');
-define('GEMINI_URL', 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' . GEMINI_KEY);
-define('SYS_PROMPT', 'أنت مساعد روحي وداعم لمنصة Daily Bible SPS. ترد بالعربي المصري البسيط والودود. ردودك قصيرة وطبيعية. لو المستخدم حزين واسيه، لو مضغوط هدّيه، لو سأل عن آية اقترحلوا آية. مش بتدي فتاوى. لو الموضوع محتاج كاهن قوله: ممكن تسأل أب اعترافك. لو اقترحت آية اكتبها في النهاية بالصيغة: [VERSE:المرجع:نص الآية]');
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
-    // امسح أي output قبل الـ headers
-    while (ob_get_level()) ob_end_clean();
-    header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: no-cache');
-
-    $raw   = file_get_contents('php://input');
-    $body  = json_decode($raw, true);
-    $msgs  = $body['messages'] ?? [];
-
-    if (empty($msgs)) {
-        echo json_encode(['error' => 'no_messages']);
-        exit;
-    }
-
-    $payload = json_encode([
-        'system_instruction' => ['parts' => [['text' => SYS_PROMPT]]],
-        'contents'           => $msgs,
-        'generationConfig'   => ['maxOutputTokens' => 500, 'temperature' => 0.85]
-    ], JSON_UNESCAPED_UNICODE);
-
-    $result   = false;
-    $method   = 'none';
-    $last_err = '';
-
-    // ══ محاولة 1: cURL ══
-    if (function_exists('curl_init')) {
-        $ch = curl_init(GEMINI_URL);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => $payload,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-            CURLOPT_TIMEOUT        => 25,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false,
-            CURLOPT_FOLLOWLOCATION => true,
-        ]);
-        $result   = curl_exec($ch);
-        $http     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $last_err = curl_error($ch);
-        curl_close($ch);
-
-        if ($result && $http === 200) {
-            $method = 'curl_ok';
-        } else {
-            // cURL اشتغل بس مش 200
-            if ($result && $http !== 200) {
-                echo json_encode([
-                    'error'   => 'curl_http_' . $http,
-                    'details' => substr($result, 0, 300)
-                ]);
-                exit;
-            }
-            $last_err = 'curl_failed: ' . $last_err;
-            $result   = false;
-        }
-    }
-
-    // ══ محاولة 2: file_get_contents ══
-    if ($result === false && ini_get('allow_url_fopen')) {
-        $ctx = stream_context_create([
-            'http' => [
-                'method'        => 'POST',
-                'header'        => "Content-Type: application/json\r\n",
-                'content'       => $payload,
-                'timeout'       => 25,
-                'ignore_errors' => true,
-            ],
-            'ssl'  => [
-                'verify_peer'      => false,
-                'verify_peer_name' => false,
-            ]
-        ]);
-        $result = @file_get_contents(GEMINI_URL, false, $ctx);
-        if ($result !== false) $method = 'fgc_ok';
-        else $last_err .= ' | fgc_failed';
-    }
-
-    // ══ فشل الاتنين ══
-    if ($result === false || $result === '') {
-        // اعرف هل allow_url_fopen شغال
-        $fopen  = ini_get('allow_url_fopen')  ? 'on'  : 'off';
-        $curl   = function_exists('curl_init') ? 'yes' : 'no';
-        echo json_encode([
-            'error'         => 'all_methods_failed',
-            'curl'          => $curl,
-            'allow_url_fopen' => $fopen,
-            'last_error'    => $last_err,
-            'tip'           => 'InfinityFree is blocking outbound HTTP. See message for solution.'
-        ]);
-        exit;
-    }
-
-    // ══ تحقق إن الرد JSON صحيح ══
-    $decoded = json_decode($result, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        echo json_encode([
-            'error' => 'invalid_json_from_gemini',
-            'method' => $method,
-            'raw'   => base64_encode(substr($result, 0, 400))
-        ]);
-        exit;
-    }
-
-    // ══ نجح! ══
-    echo $result;
-    exit;
-}
-?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -184,15 +64,45 @@ html,body{height:100%;font-family:'Cairo',sans-serif;background:var(--bg);color:
 #sb:hover{background:var(--pd)}#sb:active{transform:scale(.92)}
 #sb:disabled{background:var(--bg3);color:var(--t3);cursor:not-allowed}
 .hint{font-size:.68rem;color:var(--t3);text-align:center;margin-top:.45rem}
-/* debug box */
-#dbg{display:none;margin:8px 16px;padding:10px 14px;background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;font-size:.75rem;color:#fca5a5;font-family:monospace;direction:ltr;word-break:break-all;max-height:160px;overflow-y:auto}
-#dbg.show{display:block}
+/* setup overlay */
+#setup{position:fixed;inset:0;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;z-index:999;padding:1rem}
+#setup-box{background:var(--bg2);border:1px solid var(--br);border-radius:1.2rem;padding:2rem 1.75rem;max-width:420px;width:100%;display:flex;flex-direction:column;gap:1.1rem}
+#setup-box h2{font-size:1.1rem;font-weight:800;text-align:center}
+#setup-box p{font-size:.82rem;color:var(--t2);line-height:1.7;text-align:center}
+#setup-box a{color:var(--p);text-decoration:none}
+#setup-box a:hover{text-decoration:underline}
+#key-inp{width:100%;background:var(--s2);border:1px solid var(--br);border-radius:.6rem;padding:.65rem .9rem;color:var(--t);font-family:'Cairo',sans-serif;font-size:.85rem;outline:none;direction:ltr}
+#key-inp:focus{border-color:var(--p)}
+#key-inp::placeholder{color:var(--t3);direction:rtl}
+#key-err{font-size:.78rem;color:#f87171;display:none;text-align:center}
+#save-btn{background:var(--p);border:none;color:#fff;font-family:'Cairo',sans-serif;font-size:.9rem;font-weight:700;padding:.7rem;border-radius:.65rem;cursor:pointer;transition:background .2s}
+#save-btn:hover{background:var(--pd)}
+.steps{background:var(--bg3);border-radius:.65rem;padding:.85rem 1rem;display:flex;flex-direction:column;gap:.5rem}
+.step{display:flex;align-items:flex-start;gap:.6rem;font-size:.78rem;color:var(--t2);line-height:1.6}
+.step-n{background:var(--p);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0;margin-top:.1rem}
 #tst{position:fixed;bottom:1.4rem;left:50%;transform:translateX(-50%) translateY(70px);background:#1e1e21;border:1px solid #ef4444;color:#fca5a5;padding:.55rem 1.1rem;border-radius:2rem;font-size:.78rem;font-family:'Cairo',sans-serif;opacity:0;transition:all .3s;z-index:9999;pointer-events:none;max-width:90vw;text-align:center}
 #tst.on{opacity:1;transform:translateX(-50%) translateY(0)}
 @media(max-width:768px){.sidebar{display:none}.msg{max-width:88%}.ch{padding:.75rem 1rem}.msgs{padding:.9rem}.ia{padding:.7rem .9rem .9rem}}
 </style>
 </head>
 <body>
+
+<!-- ══ Setup Overlay ══ -->
+<div id="setup">
+  <div id="setup-box">
+    <h2>✝ Daily Bible SPS<br><span style="font-weight:400;font-size:.9rem;color:var(--t2)">المساعد الروحي</span></h2>
+    <div class="steps">
+      <div class="step"><div class="step-n">1</div><span>روح على <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></span></div>
+      <div class="step"><div class="step-n">2</div><span>اضغط <b>Create API Key</b> وكوبي الـ Key</span></div>
+      <div class="step"><div class="step-n">3</div><span>الصقه هنا واضغط ابدأ</span></div>
+    </div>
+    <input id="key-inp" type="text" placeholder="الصق الـ API Key هنا  (AIzaSy...)" autocomplete="off" spellcheck="false">
+    <div id="key-err">⚠️ الـ Key غلط — لازم يبدأ بـ AIza</div>
+    <button id="save-btn" onclick="saveKey()">ابدأ المحادثة ✨</button>
+    <p style="font-size:.72rem">الـ Key بيتحفظ في المتصفح بتاعك بس ومش بيتبعت لأي حد 🔒</p>
+  </div>
+</div>
+
 <div id="tst"></div>
 <div class="app">
   <aside class="sidebar">
@@ -220,6 +130,7 @@ html,body{height:100%;font-family:'Cairo',sans-serif;background:var(--bg);color:
           <button class="mb" onclick="pm(this,'محتاج دعاء')">🙏</button>
         </div>
       </div>
+      <button class="qb" style="margin-top:.5rem;color:var(--t3)" onclick="resetKey()"><i class="fa-solid fa-key"></i> تغيير الـ API Key</button>
     </div>
   </aside>
 
@@ -229,7 +140,6 @@ html,body{height:100%;font-family:'Cairo',sans-serif;background:var(--bg);color:
       <div class="ci"><h2>المساعد الروحي</h2><p>متاح دايماً 🤍</p></div>
       <div class="ha"><button class="hb" onclick="clr()" title="محادثة جديدة"><i class="fa-solid fa-rotate-right"></i></button></div>
     </header>
-    <div id="dbg"></div>
     <div class="msgs" id="msgs">
       <div class="wel" id="wel">
         <div class="wi">🕊️</div>
@@ -255,18 +165,38 @@ html,body{height:100%;font-family:'Cairo',sans-serif;background:var(--bg);color:
 </div>
 
 <script>
-let conv=[],busy=false;
+const SYS = 'أنت مساعد روحي وداعم لمنصة Daily Bible SPS. ترد بالعربي المصري البسيط والودود. ردودك قصيرة وطبيعية وإنسانية. لو المستخدم حزين واسيه، لو مضغوط هدّيه، لو سأل عن آية اقترحلوا آية مناسبة. مش بتدي فتاوى. لو الموضوع محتاج كاهن قوله: ممكن تسأل أب اعترافك. لو اقترحت آية اكتبها في النهاية بالصيغة: [VERSE:المرجع:نص الآية]';
 
+let conv=[], busy=false, API_KEY='';
+
+// ── Key management ──
+function loadKey(){
+  API_KEY = localStorage.getItem('gk') || '';
+  if(API_KEY) document.getElementById('setup').style.display='none';
+}
+function saveKey(){
+  const v = document.getElementById('key-inp').value.trim();
+  const err = document.getElementById('key-err');
+  if(!v.startsWith('AIza') || v.length < 30){
+    err.style.display='block'; return;
+  }
+  err.style.display='none';
+  API_KEY = v;
+  localStorage.setItem('gk', v);
+  document.getElementById('setup').style.display='none';
+}
+function resetKey(){
+  localStorage.removeItem('gk');
+  API_KEY='';
+  document.getElementById('key-inp').value='';
+  document.getElementById('setup').style.display='flex';
+}
+
+// ── UI helpers ──
 function toast(m,dur){
   const el=document.getElementById('tst');
   el.textContent=m; el.classList.add('on');
-  clearTimeout(el._t);
-  el._t=setTimeout(()=>el.classList.remove('on'),dur||5000);
-}
-function dbg(obj){
-  const el=document.getElementById('dbg');
-  el.textContent=JSON.stringify(obj,null,2);
-  el.classList.add('show');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),dur||5000);
 }
 function now(){return new Date().toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}
 function hw(){const w=document.getElementById('wel');if(w)w.remove()}
@@ -286,7 +216,6 @@ function addMsg(role,text,verse){
   const t=document.createElement('div'); t.className='mt'; t.textContent=now(); inn.appendChild(t);
   d.appendChild(av); d.appendChild(inn); A.appendChild(d); A.scrollTop=A.scrollHeight;
 }
-
 function showTyp(){
   hw(); const A=document.getElementById('msgs');
   const d=document.createElement('div'); d.className='msg bot'; d.id='typ';
@@ -296,66 +225,50 @@ function showTyp(){
   d.appendChild(av); d.appendChild(b); A.appendChild(d); A.scrollTop=A.scrollHeight;
 }
 function remTyp(){const t=document.getElementById('typ');if(t)t.remove()}
-
 function pv(txt){
   const m=txt.match(/\[VERSE:([^:]+):([^\]]+)\]/);
   if(m)return{clean:txt.replace(/\[VERSE:[^\]]+\]/,'').trim(),verse:{ref:m[1].trim(),text:m[2].trim()}};
   return{clean:txt,verse:null};
 }
 
+// ── Send message ──
 async function send(msg){
-  if(!msg.trim()||busy)return;
+  if(!msg.trim()||busy||!API_KEY)return;
   busy=true; document.getElementById('sb').disabled=true;
   addMsg('user',msg);
   conv.push({role:'user',parts:[{text:msg}]});
   showTyp();
   try{
-    const res=await fetch('chatbot.php',{
+    const url='https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+API_KEY;
+    const res=await fetch(url,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:conv})
+      body:JSON.stringify({
+        system_instruction:{parts:[{text:SYS}]},
+        contents:conv,
+        generationConfig:{maxOutputTokens:500,temperature:0.85}
+      })
     });
-
-    // اقرأ الرد كـ text الأول
-    const rawText = await res.text();
+    const data=await res.json();
     remTyp();
-
-    // حاول تعمله parse
-    let data;
-    try{
-      data = JSON.parse(rawText);
-    }catch(e){
-      // مش JSON — ظاهر إن السيرفر رجّع HTML أو رسالة خطأ
-      dbg({status: res.status, preview: rawText.substring(0,500)});
-      toast('⚠️ السيرفر رجّع رد غير متوقع — شوف الـ debug box',6000);
-      addMsg('bot','في مشكلة في الاتصال. شوف الـ debug box الأحمر لمعرفة السبب 🙏');
-      conv.pop(); return;
-    }
-
     if(data.error){
-      dbg(data);
-      // وضّح للمستخدم
-      if(data.error.includes('all_methods_failed')){
-        const msg2 = `السيرفر (InfinityFree) بيحجب الاتصال بـ Gemini 😔\n\ncURL: ${data.curl}\nallow_url_fopen: ${data.allow_url_fopen}\n\nالحل: انتقل لهوستينج تاني زي 000webhost أو Render`;
-        addMsg('bot', msg2);
-        toast('السيرفر المجاني بيحجب الطلبات الخارجية', 7000);
+      const code=data.error.status||data.error.code||'';
+      if(code==='INVALID_ARGUMENT'||res.status===400){
+        toast('⚠️ الـ API Key غلط — اضغط "تغيير الـ API Key"',7000);
       } else {
-        addMsg('bot','مش قادر أرد دلوقتي 🙏');
-        toast('خطأ: '+data.error);
+        toast('خطأ من Gemini: '+data.error.message);
       }
+      addMsg('bot','مش قادر أرد دلوقتي 🙏');
       conv.pop(); return;
     }
-
-    const raw2=data?.candidates?.[0]?.content?.parts?.[0]?.text||'مش قادر أرد دلوقتي 🙏';
-    conv.push({role:'model',parts:[{text:raw2}]});
-    const{clean,verse}=pv(raw2);
+    const raw=data?.candidates?.[0]?.content?.parts?.[0]?.text||'مش قادر أرد دلوقتي 🙏';
+    conv.push({role:'model',parts:[{text:raw}]});
+    const{clean,verse}=pv(raw);
     addMsg('bot',clean,verse);
-
   }catch(e){
     remTyp();
-    dbg({js_error: e.message, stack: e.stack});
-    toast('⚠️ JS error: '+e.message);
-    addMsg('bot','حصل خطأ غير متوقع 🙏');
+    toast('⚠️ خطأ في الاتصال: '+e.message);
+    addMsg('bot','حصل خطأ في الاتصال 🙏');
     conv.pop();
   }finally{
     busy=false; document.getElementById('sb').disabled=false;
@@ -367,14 +280,18 @@ function sq(t){document.getElementById('inp').value=t;hs()}
 function pm(btn,msg){document.querySelectorAll('.mb').forEach(b=>b.classList.remove('on'));btn.classList.add('on');send(msg)}
 function clr(){
   conv=[]; document.getElementById('msgs').innerHTML='';
-  document.getElementById('dbg').classList.remove('show');
   const w=document.createElement('div'); w.className='wel'; w.id='wel';
   w.innerHTML='<div class="wi">🕊️</div><h2>أهلاً بيك في Daily Bible SPS</h2><p>أنا هنا أساعدك وأشجعك روحياً وعاطفياً. مش لازم تكون لوحدك ✨</p><div class="cps"><button class="cp" onclick="sq(\'أنا مضغوط\')">أنا مضغوط</button><button class="cp" onclick="sq(\'محتاج آية تشجعني\')">محتاج آية</button><button class="cp" onclick="sq(\'أنا زعلان\')">أنا زعلان</button><button class="cp" onclick="sq(\'عايز أتشجع\')">شجعني</button><button class="cp" onclick="sq(\'كلمني عن الصلاة\')">عن الصلاة</button></div>';
   document.getElementById('msgs').appendChild(w);
   document.querySelectorAll('.mb').forEach(b=>b.classList.remove('on'));
 }
+
 document.getElementById('inp').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,110)+'px'});
 document.getElementById('inp').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();hs()}});
+document.getElementById('key-inp').addEventListener('keydown',function(e){if(e.key==='Enter')saveKey()});
+
+// ── Init ──
+loadKey();
 </script>
 </body>
 </html>
